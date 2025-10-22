@@ -2,32 +2,57 @@ const getScd = require('./getScd');
 const globaltext = require('./globaltext');
 const dataOper = require('./dataOper');
 const arraySwap = require('./arraySwap');
-const immutext = require('@src/immutext/');
 const initTs = require('./initTs');
+const findFullString = require('@/utils/findFullString');
+const getCodemap = require('@utils/getCodemap');
+const unescape = require('@utils/unescape');
 
 module.exports = class {
-  constructor(ts) {
+  constructor(ts, immucfg) {
     this.startTime = new Date().getTime();
-    this.$_ts = initTs(ts);
+    this.$_ts = initTs(ts, immucfg);
     this.scd = getScd(this.$_ts.nsd);
     this.keynames = this.$_ts.cp[1];
     this.keycodes = []
     this.optext = globaltext();
     this.opmate = this.mateOper();
     this.opdata = dataOper();
+    this.r2mkaText = null;
+    this.immucfg = immucfg;
+    this.functionsNameSort = []; // 存放vm代码中定义的方法，用于计算代码特征码使用
+    this.mainFunctionIdx = null; // 主函数（编号为1）在代码中的开始与结束下标
+    this.config = {
+      hasDebug: false, // 是否添加额外的debugger字符串
+      hasCodemap: false, // 是否生成codemap
+    }
   }
 
-  run() {
+  run(config = {}) {
+    Object.assign(this.config, config);
     const codeArr = this.parseGlobalText1();
     codeArr.push(this.parseGlobalText2());
     codeArr.push("})(", '$_ts', ".scj,", '$_ts', ".aebi);");
-    const codeStr = codeArr.join('')
+    const codeStr = codeArr.join('');
+    if (!this.immucfg.globalText3) {
+      const subStr = `r2mKa${codeStr.includes('r2mKa0') ? '0' : '1'}`;
+      this.immucfg.globalText3 = findFullString(codeStr, subStr);
+    }
     this.parseTs(codeStr);
     this.endTime = new Date().getTime();
-    return {
-      code: codeStr,
-      $_ts: this.$_ts,
-    }
+    this.code = codeStr;
+    if (this.config.hasCodemap) this.codemap = getCodemap(this.code);
+    return this;
+  }
+
+  genCodemap() {
+    if (!this.codemap) this.codemap = getCodemap(this.code);
+    return this;
+  }
+
+  parseR2mka(text) {
+    const start = text.indexOf('"') + 1;
+    const end = text.lastIndexOf('"') - 2;
+    return unescape(text.substr(start, end));
   }
 
   parseTs(codeStr) {
@@ -43,7 +68,7 @@ module.exports = class {
 
   parseGlobalText2() {
     const { opmate, opdata, optext, keynames, getCurr } = this;
-    optext.init(0, immutext.globalText2);
+    optext.init(0, this.immucfg.globalText2);
     opdata.init();
     opmate.init();
     opmate.setMate('G_$ht', true);
@@ -62,7 +87,7 @@ module.exports = class {
 
   parseGlobalText1(codeArr = []) {
     const { opmate, opdata, optext, keynames, getCurr } = this;
-    optext.init(0, immutext.globalText1);
+    optext.init(0, this.immucfg.globalText1);
     opdata.init({ arr8: [4, 16, 64, 256, 1024, 4096, 16384, 65536] });
     opmate.init();
     opmate.setMate('G_$e4', true);
@@ -73,17 +98,24 @@ module.exports = class {
     opmate.setMate();
     this.keycodes.push(...optext.getLine(optext.getCode() * 55295 + optext.getCode()).split(String.fromCharCode(257)));
     opmate.setMate();
-    this.keycodes.push(optext.getLine(optext.getCode() * 55295 + optext.getCode()));
-    opmate.setMate('G_$gG', true);
-    for (let i = 0; i < opmate.getMateOri('G_$gG'); i++) {
+    const r2mkaText = optext.getLine(optext.getCode() * 55295 + optext.getCode())
+    this.keycodes.push(r2mkaText);
+    this.r2mkaText = this.parseR2mka(r2mkaText);
+    // 代码段数量
+    opmate.setMate('G_code_num', true);
+    for (let i = 0; i < opmate.getMateOri('G_code_num'); i++) {
+      if (this.config.hasDebug) this.debuggerScd = this.getDebuggerScd(this.$_ts.nsd);
       this.gren(i, codeArr);
     }
-    codeArr.push('}}}}}}}}}}'.substr(opmate.getMateOri('G_$gG') - 1));
+    codeArr.push('}}}}}}}}}}'.substr(opmate.getMateOri('G_code_num') - 1));
+    this.mainFunctionIdx.push(codeArr.join('').length);
     return codeArr;
   }
 
   gren(current, codeArr) {
     const { opmate, opdata, optext, mate, scd, $_ts, keycodes, keynames } = this;
+    const codeFirst = '\n\n\n\n\n';
+    codeArr.push(codeFirst.substring(0, scd() % 5));
     opmate.setMate('_$ku');
     opmate.setMate('_$$6');
     opmate.setMate('_$b$');
@@ -92,11 +124,10 @@ module.exports = class {
     opmate.setMate('_$$g');
     opmate.setMate('_$cu');
     opmate.setMate('_$aw');
-    const codeFirst = '\n\n\n\n\n';
-    codeArr.push(codeFirst.substring(0, scd() % 5));
     opdata.setData('_$_K', optext.getList().data)
     opdata.setData('_$$H', optext.getList().data)
-    const arr2two = optext.getList().data.reduce((ans, item, idx) => {
+    opdata.setData('_$_C', optext.getList().data)
+    const arr2two = opdata.getData('_$_C').reduce((ans, item, idx) => {
       if (idx % 2 === 0) {
         ans.prev = item;
       } else {
@@ -124,15 +155,21 @@ module.exports = class {
     opmate.setMate('_$$c');
     opdata.setData('_$$k', func2(opmate.getMateOri('_$$c')));
     if (current) {
+      if (this.mainFunctionIdx === null) this.mainFunctionIdx = [codeArr.join('').length];
       codeArr.push("function ", opmate.getMate('_$jw'), "(", opmate.getMate('_$$6'));
       opdata.getData('_$_K').forEach(it => codeArr.push(",", keynames[it]));
       codeArr.push("){");
     } else {
       codeArr.push("(function(", opmate.getMate('G_$dK'), ",", opmate.getMate('G_$kv'), "){var ", opmate.getMate('_$$6'), "=0;");
     }
-    opdata.getData('_$$w').forEach(([key1, key2]) => {
-      codeArr.push("function ", keynames[key1], "(){var ", opmate.getMate('_$$q'), "=[", key2, "];Array.prototype.push.apply(", opmate.getMate('_$$q'), ",arguments);return ", opmate.getMate('_$$g'), ".apply(this,", opmate.getMate('_$$q'), ");}");
-    });
+    const functionsNameMap = opdata.getData('_$$w').reduce((ans, [key1, key2], idx) => {
+      const arr = ["function ", keynames[key1], "(){var ", opmate.getMate('_$$q'), "=[", key2, "];Array.prototype.push.apply(", opmate.getMate('_$$q'), ",arguments);return ", opmate.getMate('_$$g'), ".apply(this,", opmate.getMate('_$$q'), ");}"]
+      codeArr.push(...arr);
+      return {
+        ...ans,
+        [keynames[key1]]: arr.join(''),
+      }
+    }, {});
     opdata.getData('_$cS').forEach(item => {
       for (let i = 0; i < item.length - 1; i += 2) {
         codeArr.push(keycodes[item[i]], keynames[item[i + 1]])
@@ -148,9 +185,50 @@ module.exports = class {
     codeArr.push(opmate.getMate('_$$6'), ",", opmate.getMate('_$aw'), "=", opmate.getMate('G_$kv'), "[", current, "];");
     codeArr.push("while(1){", opmate.getMate('_$cu'), "=", opmate.getMate('_$aw'), "[", opmate.getMate('_$ku'), "++];");
     codeArr.push("if(", opmate.getMate('_$cu'), "<", opmate.getMateOri('_$bf'), "){");
+    try {
+      if ([1, 2, 3, 4].includes(current)) {
+        this.functionsSort(current, functionsNameMap);
+      }
+    } catch(err) {
+      logger.error('排序函数生成失败，会影响cookie生成！');
+    }
     const codelist = this.grenIfelse(0, opmate.getMateOri('_$bf'), []);
     codeArr.push(...codelist);
     codeArr.push("}else ", ';', '}');
+  }
+
+  functionsSort(current, functionsNameMap) {
+    const { opdata, opmate, keycodes, keynames } = this
+    const len = opdata.getData('_$$w').length;
+    const aebi = this.$_ts.aebi[current];
+    const getName = (idx) => {
+      const numarr = opdata.getData('_$$k')[idx];
+      if (!numarr || numarr.length !== 5 || !functionsNameMap[keynames[numarr[3]]]) throw new Error('排序函数生成失败，请检查！');
+      return keynames[numarr[3]];
+    }
+    let start = 0;
+    if (current === 1) {
+      keycodes
+        .filter(it => it.match(/^\([0-9]+\);$/))
+        .forEach(it => {
+          const s = parseInt(it.slice(1));
+          if (s + len > aebi.length) return;
+          try {
+            aebi.slice(s, s + len).forEach(getName);
+          } catch(err) {
+            return;
+          }
+          start = s;
+        });
+    }
+    aebi.slice(start, start + len).forEach(idx => {
+      const name = getName(idx)
+      this.functionsNameSort.push({
+        name,
+        current,
+        code: functionsNameMap[name],
+      });
+    })
   }
 
   grenIfelse(start, end, codeArr) {
@@ -188,6 +266,9 @@ module.exports = class {
     return codeArr;
   }
   grenIfElseAssign(start, codeArr) {
+    if (this.debuggerScd?.()) {
+      codeArr.push('debu', 'gger;');
+    }
     const { opdata, keynames, keycodes } = this;
     const arr = opdata.getData('_$$k')[start];
     const len = arr.length - (arr.length % 2);
@@ -224,6 +305,22 @@ module.exports = class {
         return Object.keys(mateOri).map(key => [key, mateOri[key], mate[key]])
       },
       init,
+    }
+  }
+
+  getDebuggerScd(nsd) {
+    let scd = getScd(nsd);
+    let max = scd() % 10 + 10;
+    return () => {
+      let ret = false;
+      -- max;
+      if (max <= 0) {
+        max = scd() % 10 + 10;
+        if (max < 64) {
+          ret = true;
+        }
+      }
+      return ret;
     }
   }
 }

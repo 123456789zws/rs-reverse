@@ -1,5 +1,5 @@
-const immutext = require('@src/immutext/');
 const grenKeys = require('./grenKeys');
+const gv = require('@src/handler/globalVarible');
 
 function grenJf () {
   const flags = [1, 0, 0];
@@ -9,11 +9,11 @@ function grenJf () {
   return !flag;
 }
 
-module.exports = function(defdata) {
+module.exports = function(defdata, immucfg) {
   const cp = [];
-  cp[0] = immutext.$_ts.cp0;
-  cp[1] = grenKeys(806, defdata.nsd);
-  cp[2] = immutext.$_ts.cp2;
+  cp[0] = immucfg.cp0;
+  cp[1] = grenKeys(gv.config.keynameNum, defdata.nsd);
+  cp[2] = immucfg.cp2;
   cp[6] = '';
   return {
     nsd: 0,
